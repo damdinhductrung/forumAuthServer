@@ -1,0 +1,14 @@
+{
+	"cluster" : {
+		"host" : "localhost"
+	},
+	"auth" : {
+		"connection-string" : "mongodb+srv://trung:trung@diendan-qaeki.mongodb.net/forum?retryWrites=true&streamType=netty&ssl=true",
+		"pubSecKeys" : {
+			"algorithm" : "HS256",
+			"publicKey" : "aiiaraquan",
+			"symmetric" : true
+		},
+		"eventBus.address" : "mongo.auth"
+	}
+}

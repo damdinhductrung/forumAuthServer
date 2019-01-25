@@ -6,6 +6,9 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.vertx.config.ConfigRetriever;
+import io.vertx.config.ConfigRetrieverOptions;
+import io.vertx.config.ConfigStoreOptions;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
@@ -31,19 +34,18 @@ public class AuthServiceVerticle extends AbstractVerticle {
 
 	@Override
 	public void start(Future<Void> future) {
+		
 		// TODO read from conf file
-		JsonObject mongoClientConf = new JsonObject().put("connection_string",
-				"mongodb+srv://trung:trung@diendan-qaeki.mongodb.net/forum?retryWrites=true&streamType=netty&ssl=true");
+		JsonObject mongoClientConf = new JsonObject().put("connection_string", config().getString("connection-string"));
 
-		try {
-			PubSecKeyOptions pubSecKeyOptions = new PubSecKeyOptions().setAlgorithm("HS256").setPublicKey("aiiaraquan")
-					.setSymmetric(true);
-
+		try {			
+			PubSecKeyOptions pubSecKeyOptions = new PubSecKeyOptions(config().getJsonObject("pubSecKeys"));
+			
 			mongoClient = MongoClient.createShared(vertx, mongoClientConf);
 			mongoProvider = MongoAuth.create(mongoClient, new JsonObject());
 			jwtProvider = JWTAuth.create(vertx, new JWTAuthOptions().addPubSecKey(pubSecKeyOptions));
-
-			vertx.eventBus().consumer("mongoAuth.queue", this::onMessage);
+			
+			vertx.eventBus().consumer(config().getString("eventBus.address"), this::onMessage);
 
 			LOGGER.info("successfull eventbus");
 
