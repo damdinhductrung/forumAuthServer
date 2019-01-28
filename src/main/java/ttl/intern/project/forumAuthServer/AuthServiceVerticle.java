@@ -6,17 +6,12 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.vertx.config.ConfigRetriever;
-import io.vertx.config.ConfigRetrieverOptions;
-import io.vertx.config.ConfigStoreOptions;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.eventbus.Message;
 import io.vertx.core.json.JsonObject;
-import io.vertx.core.net.NetServer;
-import io.vertx.core.net.NetServerOptions;
 import io.vertx.ext.auth.PubSecKeyOptions;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.auth.jwt.JWTAuth;
@@ -34,17 +29,17 @@ public class AuthServiceVerticle extends AbstractVerticle {
 
 	@Override
 	public void start(Future<Void> future) {
-		
+
 		// TODO read from conf file
 		JsonObject mongoClientConf = new JsonObject().put("connection_string", config().getString("connection-string"));
 
-		try {			
+		try {
 			PubSecKeyOptions pubSecKeyOptions = new PubSecKeyOptions(config().getJsonObject("pubSecKeys"));
-			
+
 			mongoClient = MongoClient.createShared(vertx, mongoClientConf);
 			mongoProvider = MongoAuth.create(mongoClient, new JsonObject());
 			jwtProvider = JWTAuth.create(vertx, new JWTAuthOptions().addPubSecKey(pubSecKeyOptions));
-			
+
 			vertx.eventBus().consumer(config().getString("eventBus.address"), this::onMessage);
 
 			LOGGER.info("successfull eventbus");
@@ -61,6 +56,7 @@ public class AuthServiceVerticle extends AbstractVerticle {
 	}
 
 	public void onMessage(Message<JsonObject> message) {
+		LOGGER.info("Incomming Message");
 		if (!message.headers().contains("action")) {
 			LOGGER.error("No action header specified for message with headers {} and body {}", message.headers(),
 					message.body().encodePrettily());
@@ -70,19 +66,19 @@ public class AuthServiceVerticle extends AbstractVerticle {
 
 		String action = message.headers().get("action");
 
-		// todo: class call
+		// TODO class call
 		switch (action) {
-		case "login":
+		case "user-login":
 			LOGGER.info("action: authenticate User");
 			login(message);
 			break;
 		case "is-authorized":
 			isAuthorized(message);
 			break;
-		case "signup":
+		case "user-signup":
 			createUser(message);
 			break;
-		case "update-user-password":
+		case "user-update-password":
 			updateUserPassword(message);
 			break;
 		case "update-user-roles":
@@ -123,7 +119,7 @@ public class AuthServiceVerticle extends AbstractVerticle {
 				message.fail(ErrorCodes.DATA_ERROR.ordinal(), res.cause().toString());
 			}
 		});
-		
+
 	}
 
 	private void updateUserPermisssions(Message<JsonObject> message) {
@@ -135,60 +131,30 @@ public class AuthServiceVerticle extends AbstractVerticle {
 			if (userResult.succeeded()) {
 				MongoUser user = userResult.result();
 				
-				String password = mongoProvider.getHashStrategy().computeHash(message.body().getString("password"), user);
-				
+				if (mongoProvider.getHashStrategy().computeHash(message.body().getString("oldPassword"), user) == user.principal().getString("password")) {
+					System.out.println("Right old password");
+				}
+
+				String password = mongoProvider.getHashStrategy().computeHash(message.body().getString("newPassword"), user);
+
 				user.principal().remove("password");
 				user.principal().put("password", password);
-				
+
 				JsonObject query = new JsonObject().put("username", user.principal().getString("username"));
 				JsonObject replace = user.principal();
-				
+
 				mongoClient.findOneAndReplace("user", query, replace, res -> {
 					if (res.succeeded()) {
 						message.reply("update user password successful");
 					} else {
-						System.out.println(res.cause());
+						LOGGER.error(res.cause().toString());
 						message.fail(ErrorCodes.DB_ERROR.ordinal(), res.cause().toString());
 					}
 				});
-				
-				System.out.println("password: " + password);
 			} else {
 				message.fail(ErrorCodes.DB_ERROR.ordinal(), userResult.cause().toString());
 			}
 		});
-
-	}
-
-	private void createUser(Message<JsonObject> message) {
-		authenticateJWT(new JsonObject().put("jwt", message.body().getString("jwt")), res -> {
-			if (res.succeeded()) {
-				MongoUser user = res.result();
-
-				user.isAuthorized("admin", response -> {
-					if (response.succeeded()) {
-						List<String> roles = new ArrayList<>();
-						roles.add(message.body().getString("role"));
-
-						mongoProvider.insertUser(message.body().getString("username"),
-								message.body().getString("password"), roles, new ArrayList<String>(), handle -> {
-									if (handle.succeeded()) {
-										message.reply("create user successful");
-									} else {
-										message.fail(ErrorCodes.DB_ERROR.ordinal(), handle.cause().toString());
-									}
-
-								});
-					} else {
-						message.fail(ErrorCodes.DATA_ERROR.ordinal(), response.cause().toString());
-					}
-				});
-			} else {
-				message.fail(ErrorCodes.DATA_ERROR.ordinal(), res.cause().toString());
-			}
-		});
-		
-		
 
 	}
 
@@ -197,21 +163,34 @@ public class AuthServiceVerticle extends AbstractVerticle {
 
 	}
 
+	private void createUser(Message<JsonObject> message) {
+		List<String> roles = new ArrayList<>();
+		roles.add("member");
+
+		mongoProvider.insertUser(message.body().getString("username"), message.body().getString("password"), roles,
+				new ArrayList<String>(), handle -> {
+					if (handle.succeeded()) {
+						message.reply("create user successful");
+					} else {
+						message.fail(ErrorCodes.DB_ERROR.ordinal(), handle.cause().toString());
+					}
+
+				});
+	}
+
 	private void login(Message<JsonObject> message) {
 		authenticateLogin(message.body(), res -> {
 			if (res.succeeded()) {
 				MongoUser user = res.result();
-				message.reply(generateToken(user.principal().getString("username")));
+				message.reply(generateToken(user.principal().getString("username"), user.principal().getJsonArray("roles").getString(0)));
 			} else {
-
 				message.fail(ErrorCodes.DATA_ERROR.ordinal(), res.cause().getMessage());
 			}
 		});
 	}
 
-	private String generateToken(String username) {
-		String token = jwtProvider.generateToken(new JsonObject().put("username", username));
-
+	private String generateToken(String username, String role) {
+		String token = jwtProvider.generateToken(new JsonObject().put("username", username).put("role", role));
 		return token;
 	}
 
