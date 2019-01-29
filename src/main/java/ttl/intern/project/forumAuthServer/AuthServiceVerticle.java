@@ -16,6 +16,7 @@ import io.vertx.ext.auth.PubSecKeyOptions;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.auth.jwt.JWTAuth;
 import io.vertx.ext.auth.jwt.JWTAuthOptions;
+import io.vertx.ext.auth.mongo.AuthenticationException;
 import io.vertx.ext.auth.mongo.MongoAuth;
 import io.vertx.ext.auth.mongo.impl.MongoUser;
 import io.vertx.ext.mongo.MongoClient;
@@ -30,7 +31,6 @@ public class AuthServiceVerticle extends AbstractVerticle {
 	@Override
 	public void start(Future<Void> future) {
 
-		// TODO read from conf file
 		JsonObject mongoClientConf = new JsonObject().put("connection_string", config().getString("connection-string"));
 
 		try {
@@ -51,6 +51,7 @@ public class AuthServiceVerticle extends AbstractVerticle {
 
 	}
 
+	// TODO error code ?
 	public enum ErrorCodes {
 		NO_ACTION_SPECIFIED, BAD_ACTION, DATA_ERROR, DB_ERROR
 	}
@@ -68,89 +69,83 @@ public class AuthServiceVerticle extends AbstractVerticle {
 
 		// TODO class call
 		switch (action) {
-		case "user-login":
-			LOGGER.info("action: authenticate User");
+		case Consts.EBACTION_LOGIN:
+			LOGGER.info("action: " + Consts.EBACTION_LOGIN);
 			login(message);
 			break;
-		case "is-authorized":
-			isAuthorized(message);
+		case Consts.EBACTION_SIGNUP:
+			LOGGER.info("action: " + Consts.EBACTION_SIGNUP);
+			signup(message);
 			break;
-		case "user-signup":
-			createUser(message);
-			break;
-		case "user-update-password":
+		case Consts.EBACTION_UPDATE_USER_PASSWORD:
+			LOGGER.info("action: " + Consts.EBACTION_UPDATE_USER_PASSWORD);
 			updateUserPassword(message);
 			break;
-		case "update-user-roles":
-			updateUserRole(message);
-			break;
-		case "update-user-permissions":
-			updateUserPermisssions(message);
-			break;
 		default:
+			LOGGER.info("Bad action: " + action);
 			message.fail(ErrorCodes.BAD_ACTION.ordinal(), "Bad action: " + action);
 		}
 	}
 
-	private void updateUserRole(Message<JsonObject> message) {
-		authenticateJWT(new JsonObject().put("jwt", message.body().getString("jwt")), res -> {
-			if (res.succeeded()) {
-				MongoUser user = res.result();
-
-				user.isAuthorized("admin", response -> {
-					if (response.succeeded()) {
-						List<String> roles = new ArrayList<>();
-						roles.add(message.body().getString("role"));
-
-						mongoProvider.insertUser(message.body().getString("username"),
-								message.body().getString("password"), roles, new ArrayList<String>(), handle -> {
-									if (handle.succeeded()) {
-										message.reply("create user successful");
-									} else {
-										message.fail(ErrorCodes.DB_ERROR.ordinal(), handle.cause().toString());
-									}
-
-								});
-					} else {
-						message.fail(ErrorCodes.DATA_ERROR.ordinal(), response.cause().toString());
-					}
-				});
-			} else {
-				message.fail(ErrorCodes.DATA_ERROR.ordinal(), res.cause().toString());
-			}
-		});
-
-	}
-
-	private void updateUserPermisssions(Message<JsonObject> message) {
-
-	}
+//	private void updateUserRole(Message<JsonObject> message) {
+//		authenticateJWT(new JsonObject().put("jwt", message.body().getString("jwt")), res -> {
+//			if (res.succeeded()) {
+//				MongoUser user = res.result();
+//
+//				user.isAuthorized("admin", response -> {
+//					if (response.succeeded()) {
+//						List<String> roles = new ArrayList<>();
+//						roles.add(message.body().getString("role"));
+//
+//						mongoProvider.insertUser(message.body().getString("username"),
+//								message.body().getString("password"), roles, new ArrayList<String>(), handle -> {
+//									if (handle.succeeded()) {
+//										message.reply("create user successful");
+//									} else {
+//										message.fail(ErrorCodes.DB_ERROR.ordinal(), handle.cause().toString());
+//									}
+//
+//								});
+//					} else {
+//						message.fail(ErrorCodes.DATA_ERROR.ordinal(), response.cause().toString());
+//					}
+//				});
+//			} else {
+//				message.fail(ErrorCodes.DATA_ERROR.ordinal(), res.cause().toString());
+//			}
+//		});
+//
+//	}
 
 	private void updateUserPassword(Message<JsonObject> message) {
 		authenticateJWT(new JsonObject().put("jwt", message.body().getString("jwt")), userResult -> {
 			if (userResult.succeeded()) {
 				MongoUser user = userResult.result();
-				
-				if (mongoProvider.getHashStrategy().computeHash(message.body().getString("oldPassword"), user) == user.principal().getString("password")) {
-					System.out.println("Right old password");
+
+				if (mongoProvider.getHashStrategy().computeHash(message.body().getString("oldPassword"), user).equals(user
+						.principal().getString("password"))) {
+
+					String password = mongoProvider.getHashStrategy()
+							.computeHash(message.body().getString("newPassword"), user);
+
+					user.principal().remove("password");
+					user.principal().put("password", password);
+
+					JsonObject query = new JsonObject().put("username", user.principal().getString("username"));
+					JsonObject replace = user.principal();
+
+					mongoClient.findOneAndReplace("user", query, replace, res -> {
+						if (res.succeeded()) {
+							message.reply("update user password successful");
+						} else {
+							LOGGER.error(res.cause().toString());
+							message.fail(ErrorCodes.DB_ERROR.ordinal(), res.cause().toString());
+						}
+					});
+
+				} else {
+					message.fail(ErrorCodes.DATA_ERROR.ordinal(), "Wrong old password");
 				}
-
-				String password = mongoProvider.getHashStrategy().computeHash(message.body().getString("newPassword"), user);
-
-				user.principal().remove("password");
-				user.principal().put("password", password);
-
-				JsonObject query = new JsonObject().put("username", user.principal().getString("username"));
-				JsonObject replace = user.principal();
-
-				mongoClient.findOneAndReplace("user", query, replace, res -> {
-					if (res.succeeded()) {
-						message.reply("update user password successful");
-					} else {
-						LOGGER.error(res.cause().toString());
-						message.fail(ErrorCodes.DB_ERROR.ordinal(), res.cause().toString());
-					}
-				});
 			} else {
 				message.fail(ErrorCodes.DB_ERROR.ordinal(), userResult.cause().toString());
 			}
@@ -158,12 +153,7 @@ public class AuthServiceVerticle extends AbstractVerticle {
 
 	}
 
-	private void isAuthorized(Message<JsonObject> message) {
-		// TODO Auto-generated method stub
-
-	}
-
-	private void createUser(Message<JsonObject> message) {
+	private void signup(Message<JsonObject> message) {
 		List<String> roles = new ArrayList<>();
 		roles.add("member");
 
@@ -179,28 +169,34 @@ public class AuthServiceVerticle extends AbstractVerticle {
 	}
 
 	private void login(Message<JsonObject> message) {
-		authenticateLogin(message.body(), res -> {
+		authenticateUser(message.body(), res -> {
 			if (res.succeeded()) {
 				MongoUser user = res.result();
-				message.reply(generateToken(user.principal().getString("username"), user.principal().getJsonArray("roles").getString(0)));
+				message.reply(generateJWT(user.principal().getString("username"),
+						user.principal().getJsonArray("roles").getString(0)));
 			} else {
 				message.fail(ErrorCodes.DATA_ERROR.ordinal(), res.cause().getMessage());
 			}
 		});
 	}
 
-	private String generateToken(String username, String role) {
+	private String generateJWT(String username, String role) {
 		String token = jwtProvider.generateToken(new JsonObject().put("username", username).put("role", role));
 		return token;
 	}
 
-	private void authenticateLogin(JsonObject authInfo, Handler<AsyncResult<MongoUser>> handler) {
+	private void authenticateUser(JsonObject authInfo, Handler<AsyncResult<MongoUser>> handler) {
 		mongoProvider.authenticate(authInfo, res -> {
 			if (res.succeeded()) {
 				MongoUser user = new MongoUser(res.result().principal(), mongoProvider);
 				handler.handle(Future.succeededFuture(user));
 			} else {
-				handler.handle(Future.failedFuture(res.cause()));
+				if (res.cause().getClass().equals(AuthenticationException.class))
+					handler.handle(Future.failedFuture("Invalid Username or Password"));
+				else {
+					LOGGER.error(res.cause().toString());
+					handler.handle(Future.failedFuture("Database error"));
+				}
 			}
 		});
 	}
