@@ -122,8 +122,8 @@ public class AuthServiceVerticle extends AbstractVerticle {
 			if (userResult.succeeded()) {
 				MongoUser user = userResult.result();
 
-				if (mongoProvider.getHashStrategy().computeHash(message.body().getString("oldPassword"), user).equals(user
-						.principal().getString("password"))) {
+				if (mongoProvider.getHashStrategy().computeHash(message.body().getString("oldPassword"), user)
+						.equals(user.principal().getString("password"))) {
 
 					String password = mongoProvider.getHashStrategy()
 							.computeHash(message.body().getString("newPassword"), user);
@@ -157,15 +157,26 @@ public class AuthServiceVerticle extends AbstractVerticle {
 		List<String> roles = new ArrayList<>();
 		roles.add("member");
 
-		mongoProvider.insertUser(message.body().getString("username"), message.body().getString("password"), roles,
-				new ArrayList<String>(), handle -> {
-					if (handle.succeeded()) {
-						message.reply("create user successful");
-					} else {
-						message.fail(ErrorCodes.DB_ERROR.ordinal(), handle.cause().toString());
-					}
+		mongoClient.find("user", new JsonObject().put("username", message.body().getString("username")), res -> {
+			if (res.succeeded()) {
+				if (res.result().isEmpty()) {
+					mongoProvider.insertUser(message.body().getString("username"), message.body().getString("password"),
+							roles, new ArrayList<String>(), handle -> {
+								if (handle.succeeded()) {
+									message.reply("create user successful");
+								} else {
+									message.fail(ErrorCodes.DB_ERROR.ordinal(), handle.cause().toString());
+								}
 
-				});
+							});
+				} else {
+					message.fail(ErrorCodes.DATA_ERROR.ordinal(), "Username has been already taken");
+				}
+			} else {
+				message.fail(ErrorCodes.DB_ERROR.ordinal(), res.cause().toString());
+			}
+		});
+
 	}
 
 	private void login(Message<JsonObject> message) {
