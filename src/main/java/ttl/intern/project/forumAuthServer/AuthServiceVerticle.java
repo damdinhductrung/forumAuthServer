@@ -11,6 +11,7 @@ import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.eventbus.Message;
+import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.PubSecKeyOptions;
 import io.vertx.ext.auth.User;
@@ -183,8 +184,10 @@ public class AuthServiceVerticle extends AbstractVerticle {
 		authenticateUser(message.body(), res -> {
 			if (res.succeeded()) {
 				MongoUser user = res.result();
-				message.reply(generateJWT(user.principal().getString("username"),
-						user.principal().getJsonArray("roles").getString(0)));
+				String jwt = generateJWT(user.principal().getString("username"),
+						user.principal().getJsonArray("roles").getString(0));
+				JsonObject result = new JsonObject().put("jwt", jwt);
+				message.reply(Json.encodePrettily(result));
 			} else {
 				message.fail(ErrorCodes.DATA_ERROR.ordinal(), res.cause().getMessage());
 			}
