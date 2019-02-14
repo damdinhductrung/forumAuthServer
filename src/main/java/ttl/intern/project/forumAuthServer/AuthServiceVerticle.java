@@ -52,17 +52,12 @@ public class AuthServiceVerticle extends AbstractVerticle {
 
 	}
 
-	// TODO error code ?
-	public enum ErrorCodes {
-		NO_ACTION_SPECIFIED, BAD_ACTION, DATA_ERROR, DB_ERROR
-	}
-
 	public void onMessage(Message<JsonObject> message) {
 		LOGGER.info("Incomming Message");
 		if (!message.headers().contains("action")) {
 			LOGGER.error("No action header specified for message with headers {} and body {}", message.headers(),
 					message.body().encodePrettily());
-			message.fail(ErrorCodes.NO_ACTION_SPECIFIED.ordinal(), "No action header specified");
+			message.fail(EBCode.NO_ACTION_SPECIFIED.ordinal(), "No action header specified");
 			return;
 		}
 
@@ -70,21 +65,21 @@ public class AuthServiceVerticle extends AbstractVerticle {
 
 		// TODO class call
 		switch (action) {
-		case Consts.EBACTION_LOGIN:
-			LOGGER.info("action: " + Consts.EBACTION_LOGIN);
+		case Consts.EB_ACTION_LOGIN:
+			LOGGER.info("action: " + Consts.EB_ACTION_LOGIN);
 			login(message);
 			break;
-		case Consts.EBACTION_SIGNUP:
-			LOGGER.info("action: " + Consts.EBACTION_SIGNUP);
+		case Consts.EB_ACTION_SIGNUP:
+			LOGGER.info("action: " + Consts.EB_ACTION_SIGNUP);
 			signup(message);
 			break;
-		case Consts.EBACTION_UPDATE_USER_PASSWORD:
-			LOGGER.info("action: " + Consts.EBACTION_UPDATE_USER_PASSWORD);
+		case Consts.EB_ACTION_UPDATE_USER_PASSWORD:
+			LOGGER.info("action: " + Consts.EB_ACTION_UPDATE_USER_PASSWORD);
 			updateUserPassword(message);
 			break;
 		default:
 			LOGGER.info("Bad action: " + action);
-			message.fail(ErrorCodes.BAD_ACTION.ordinal(), "Bad action: " + action);
+			message.fail(EBCode.BAD_ACTION.ordinal(), "Bad action: " + action);
 		}
 	}
 
@@ -137,18 +132,18 @@ public class AuthServiceVerticle extends AbstractVerticle {
 
 					mongoClient.findOneAndReplace("user", query, replace, res -> {
 						if (res.succeeded()) {
-							message.reply("update user password successful");
+							message.reply(EBCode.SUCCESSFUL);
 						} else {
 							LOGGER.error(res.cause().toString());
-							message.fail(ErrorCodes.DB_ERROR.ordinal(), res.cause().toString());
+							message.fail(EBCode.ERROR_DATABASE.ordinal(), res.cause().toString());
 						}
 					});
 
 				} else {
-					message.fail(ErrorCodes.DATA_ERROR.ordinal(), "Wrong old password");
+					message.fail(EBCode.ERROR_UPDATE_PASSWORD_INVALID_OLDPASS.ordinal(), "Wrong old password");
 				}
 			} else {
-				message.fail(ErrorCodes.DB_ERROR.ordinal(), userResult.cause().toString());
+				message.fail(EBCode.ERROR_DATABASE.ordinal(), userResult.cause().toString());
 			}
 		});
 
@@ -164,17 +159,17 @@ public class AuthServiceVerticle extends AbstractVerticle {
 					mongoProvider.insertUser(message.body().getString("username"), message.body().getString("password"),
 							roles, new ArrayList<String>(), handle -> {
 								if (handle.succeeded()) {
-									message.reply("create user successful");
+									message.reply(EBCode.SUCCESSFUL);
 								} else {
-									message.fail(ErrorCodes.DB_ERROR.ordinal(), handle.cause().toString());
+									message.fail(EBCode.ERROR_DATABASE.ordinal(), handle.cause().toString());
 								}
 
 							});
 				} else {
-					message.fail(ErrorCodes.DATA_ERROR.ordinal(), "Username has been already taken");
+					message.fail(EBCode.ERROR_SIGNUP_USERNAME_EXITED.ordinal(), "Username has been already taken");
 				}
 			} else {
-				message.fail(ErrorCodes.DB_ERROR.ordinal(), res.cause().toString());
+				message.fail(EBCode.ERROR_DATABASE.ordinal(), res.cause().toString());
 			}
 		});
 
@@ -189,7 +184,11 @@ public class AuthServiceVerticle extends AbstractVerticle {
 				JsonObject result = new JsonObject().put("jwt", jwt);
 				message.reply(Json.encodePrettily(result));
 			} else {
-				message.fail(ErrorCodes.DATA_ERROR.ordinal(), res.cause().getMessage());
+				if (res.cause().getClass().equals(AuthenticationException.class)) {
+					message.fail(EBCode.ERROR_LOGIN_INVALID.ordinal(), "Invalid usernam or password");
+				} else {
+					message.fail(EBCode.ERROR_DATABASE.ordinal(), "");
+				}
 			}
 		});
 	}
@@ -205,12 +204,7 @@ public class AuthServiceVerticle extends AbstractVerticle {
 				MongoUser user = new MongoUser(res.result().principal(), mongoProvider);
 				handler.handle(Future.succeededFuture(user));
 			} else {
-				if (res.cause().getClass().equals(AuthenticationException.class))
-					handler.handle(Future.failedFuture("Invalid Username or Password"));
-				else {
-					LOGGER.error(res.cause().toString());
-					handler.handle(Future.failedFuture("Database error"));
-				}
+				handler.handle(Future.failedFuture(res.cause()));
 			}
 		});
 	}
