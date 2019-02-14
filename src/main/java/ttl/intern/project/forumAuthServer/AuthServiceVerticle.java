@@ -181,8 +181,7 @@ public class AuthServiceVerticle extends AbstractVerticle {
 				MongoUser user = res.result();
 				String jwt = generateJWT(user.principal().getString("username"),
 						user.principal().getJsonArray("roles").getString(0));
-				JsonObject result = new JsonObject().put("jwt", jwt);
-				message.reply(Json.encodePrettily(result));
+				message.reply(jwt);
 			} else {
 				if (res.cause().getClass().equals(AuthenticationException.class)) {
 					message.fail(EBCode.ERROR_LOGIN_INVALID.ordinal(), "Invalid usernam or password");
