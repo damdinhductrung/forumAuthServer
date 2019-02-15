@@ -73,9 +73,13 @@ public class AuthServiceVerticle extends AbstractVerticle {
 			LOGGER.info("action: " + Consts.EB_ACTION_SIGNUP);
 			signup(message);
 			break;
-		case Consts.EB_ACTION_UPDATE_USER_PASSWORD:
-			LOGGER.info("action: " + Consts.EB_ACTION_UPDATE_USER_PASSWORD);
-			updateUserPassword(message);
+//		case Consts.EB_ACTION_UPDATE_USER_PASSWORD:
+//			LOGGER.info("action: " + Consts.EB_ACTION_UPDATE_USER_PASSWORD);
+//			updateUserPassword(message);
+//			break;
+		case Consts.EB_ACTION_JWT_AUTHORIZATION:
+			LOGGER.info("action: " + Consts.EB_ACTION_JWT_AUTHORIZATION);
+			jwtAuthorization(message);
 			break;
 		default:
 			LOGGER.info("Bad action: " + action);
@@ -113,41 +117,41 @@ public class AuthServiceVerticle extends AbstractVerticle {
 //
 //	}
 
-	private void updateUserPassword(Message<JsonObject> message) {
-		authenticateJWT(new JsonObject().put("jwt", message.body().getString("jwt")), userResult -> {
-			if (userResult.succeeded()) {
-				MongoUser user = userResult.result();
-
-				if (mongoProvider.getHashStrategy().computeHash(message.body().getString("oldPassword"), user)
-						.equals(user.principal().getString("password"))) {
-
-					String password = mongoProvider.getHashStrategy()
-							.computeHash(message.body().getString("newPassword"), user);
-
-					user.principal().remove("password");
-					user.principal().put("password", password);
-
-					JsonObject query = new JsonObject().put("username", user.principal().getString("username"));
-					JsonObject replace = user.principal();
-
-					mongoClient.findOneAndReplace("user", query, replace, res -> {
-						if (res.succeeded()) {
-							message.reply(EBCode.SUCCESSFUL);
-						} else {
-							LOGGER.error(res.cause().toString());
-							message.fail(EBCode.ERROR_DATABASE.ordinal(), res.cause().toString());
-						}
-					});
-
-				} else {
-					message.fail(EBCode.ERROR_UPDATE_PASSWORD_INVALID_OLDPASS.ordinal(), "Wrong old password");
-				}
-			} else {
-				message.fail(EBCode.ERROR_DATABASE.ordinal(), userResult.cause().toString());
-			}
-		});
-
-	}
+//	private void updateUserPassword(Message<JsonObject> message) {
+//		authenticateJWT(new JsonObject().put("jwt", message.body().getString("jwt")), userResult -> {
+//			if (userResult.succeeded()) {
+//				MongoUser user = userResult.result();
+//
+//				if (mongoProvider.getHashStrategy().computeHash(message.body().getString("oldPassword"), user)
+//						.equals(user.principal().getString("password"))) {
+//
+//					String password = mongoProvider.getHashStrategy()
+//							.computeHash(message.body().getString("newPassword"), user);
+//
+//					user.principal().remove("password");
+//					user.principal().put("password", password);
+//
+//					JsonObject query = new JsonObject().put("username", user.principal().getString("username"));
+//					JsonObject replace = user.principal();
+//
+//					mongoClient.findOneAndReplace("user", query, replace, res -> {
+//						if (res.succeeded()) {
+//							message.reply(EBCode.SUCCESSFUL);
+//						} else {
+//							LOGGER.error(res.cause().toString());
+//							message.fail(EBCode.ERROR_DATABASE.ordinal(), res.cause().toString());
+//						}
+//					});
+//
+//				} else {
+//					message.fail(EBCode.ERROR_UPDATE_PASSWORD_INVALID_OLDPASS.ordinal(), "Wrong old password");
+//				}
+//			} else {
+//				message.fail(EBCode.ERROR_DATABASE.ordinal(), userResult.cause().toString());
+//			}
+//		});
+//
+//	}
 
 	private void signup(Message<JsonObject> message) {
 		List<String> roles = new ArrayList<>();
@@ -191,6 +195,17 @@ public class AuthServiceVerticle extends AbstractVerticle {
 			}
 		});
 	}
+	
+	private void jwtAuthorization(Message<JsonObject> message) {
+		authenticateJWT(message.body(), res -> {
+			if (res.succeeded()) {
+				message.reply(res.result());
+			} else {
+				res.cause().printStackTrace();
+				message.fail(EBCode.ERROR_INVALID_TOKEN.ordinal(), "Invalid token");
+			}
+		});
+	}
 
 	private String generateJWT(String username, String role) {
 		String token = jwtProvider.generateToken(new JsonObject().put("username", username).put("role", role));
@@ -208,19 +223,25 @@ public class AuthServiceVerticle extends AbstractVerticle {
 		});
 	}
 
-	private void authenticateJWT(JsonObject authInfo, Handler<AsyncResult<MongoUser>> handler) {
+	private void authenticateJWT(JsonObject authInfo, Handler<AsyncResult<JsonObject>> handler) {
 		jwtProvider.authenticate(authInfo, res -> {
-			User user = res.result();
-			JsonObject query = new JsonObject().put(mongoProvider.getUsernameField(),
-					user.principal().getString("username"));
-			mongoClient.find("user", query, response -> {
-				if (response.succeeded()) {
-					MongoUser mongoUser = new MongoUser(response.result().get(0), mongoProvider);
-					handler.handle(Future.succeededFuture(mongoUser));
-				} else {
-					handler.handle(Future.failedFuture(response.cause()));
-				}
-			});
+			if (res.succeeded()) {
+				User user = res.result();
+				handler.handle(Future.succeededFuture(user.principal()));
+//				JsonObject query = new JsonObject().put(mongoProvider.getUsernameField(),
+//						user.principal().getString("username"));
+//				mongoClient.find("user", query, response -> {
+//					if (response.succeeded()) {
+//						MongoUser mongoUser = new MongoUser(response.result().get(0), mongoProvider);
+//						handler.handle(Future.succeededFuture(mongoUser));
+//					} else {
+//						handler.handle(Future.failedFuture(response.cause()));
+//					}
+//				});
+			} else {
+				handler.handle(Future.failedFuture(res.cause()));
+			}
+			
 		});
 	}
 
